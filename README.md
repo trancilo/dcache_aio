@@ -1,4 +1,4 @@
-#dCache AIO (dCache all-in-one)
+# dCache AIO (dCache all-in-one)
 
 A script that sets up a nice simple dCache all-in-one server.
 It creates a self-signed host certificate, but does not use that
