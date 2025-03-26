@@ -17,12 +17,12 @@
 # Use on a test system only, at your own risk!
 # DON'T RUN THIS ON A PRODUCTION SERVER!
 
-# Default values for variables
-DATADIR=""
-PASSWD=""
 
 # Help function to explain usage
 function show_help {
+    echo "This script will install a basic dCache instance on a test server."
+    echo "Do not run this on a production system!"
+    echo
     echo "Usage: $0 --datadir=<directory> --passwd=<password>"
     echo "  --datadir=DIR   Specify the data directory."
     echo "  --passwd=PASS   Specify the password."
@@ -32,6 +32,11 @@ function show_help {
     echo
     echo "Information about dCache itself can be found at: https://www.dcache.org"
 }
+
+
+# Initializing default values for variables
+DATADIR=""
+PASSWD=""
 
 # Parse command line arguments
 for arg in "$@"
@@ -61,7 +66,7 @@ done
 if [ -z "$DATADIR" ] || [ -z "$PASSWD" ]; then
     show_help
     echo
-    read -p "No or incomplete arguments provided. Do you want to continue and provide the values interactively? (y/n) " answer
+    read -r -p "No or incomplete arguments provided. Do you want to continue and provide the values interactively? (y/n) " answer
     case $answer in
         [Yy]* )
             echo "Continuing with interactive input..."
@@ -73,20 +78,29 @@ if [ -z "$DATADIR" ] || [ -z "$PASSWD" ]; then
     esac
 fi
 
-# Prompt for DATADIR if not provided
-while [ -z "$DATADIR" ]; do
-    read -p "Please enter the DATADIR: " DATADIR
+# Prompt for DATADIR until it's not empty and exists
+while [ -z "$DATADIR" ] || [ ! -d "$DATADIR" ] ; do
+  read -r -p "Enter DATADIR (must be an existing directory): " DATADIR
+  if [ -z "$DATADIR" ]; then
+    echo "DATADIR cannot be empty."
+  elif [ ! -d "$DATADIR" ]; then
+    echo "Directory '$DATADIR' does not exist."
+  fi
 done
 
-# Prompt for PASSWD if not provided
+# Prompt for PASSWD until it's not empty
 while [ -z "$PASSWD" ]; do
-    read -sp "Please enter the PASSWD: " PASSWD
-    echo
+  read -rp "Enter PASSWD (cannot be empty): " PASSWD
+  echo  # for newline
+  if [ -z "$PASSWD" ]; then
+    echo "PASSWD cannot be empty."
+  fi
 done
 
 # Display the values
 echo "DATADIR is set to: $DATADIR"
 echo "PASSWD is set to: $PASSWD"
+
 
 # Set locales for postgres dbinit
 dnf install -y glibc-locale-source glibc-langpack-en
@@ -105,25 +119,6 @@ fi
 # Apply the changes
 source /etc/locale.conf
 
-# Check if DATADIR is provided
-if [ -z "$DATADIR" ]; then
-    read -p "Please enter the DATADIR: " DATADIR
-fi
-
-# Check if PASSWD is provided
-if [ -z "$PASSWD" ]; then
-    read -sp "Please enter the PASSWD: " PASSWD
-    echo
-fi
-
-# Display the values
-echo "DATADIR is set to: $DATADIR"
-echo "PASSWD is set to: $PASSWD"
-
-
-if [ -x ${DATADIR} ]; then
-    rm -rf ${DATADIR}
-fi
 
 # Check if firewalld is running
 if systemctl is-active --quiet firewalld; then
@@ -135,8 +130,11 @@ if systemctl is-active --quiet firewalld; then
     # Open port for Admin service
     firewall-cmd --permanent --zone=public --add-port=22224/tcp
 
-    # Open port for WebDAV-alma service
-    firewall-cmd --permanent --zone=public --add-port=2880/tcp
+    # Open port for WebDAV doors
+    firewall-cmd --permanent --zone=public --add-port=2880-2881/tcp
+
+    # Open door for dCacheView and REST API
+    firewall-cmd --permanent --zone=public --add-port=3880/tcp
 
     # Open ports for Pool1 service
     firewall-cmd --permanent --zone=public --add-port=20000-25000/tcp
@@ -155,15 +153,16 @@ fi
 URL="https://www.dcache.org/old/downloads/1.9/index.shtml"
 
 echo "Fetching the downloads page with lynx..."
-page_content=$(lynx -dump $URL)
+dnf install -y lynx
+page_content=$(lynx -dump "$URL")
 
 # Extract the latest RPM link
 dcache_rpm=$(echo "$page_content" | grep -oP 'https://.*?\.rpm' | sort --version-sort | tail -1)
 if [ -z "$dcache_rpm" ]; then
-    echo "No RPM found on the page. Please check the URL or page content."
+    echo "No RPM found on the page. Please check the URL ($URL) or page content."
     exit 1
 fi
-dcache_basename=$(basename ${dcache_rpm})
+dcache_basename=$(basename "${dcache_rpm}")
 echo "Latest dCache version URL: $dcache_rpm"
 echo "Latest dCache version file: $dcache_basename"
 
@@ -172,9 +171,7 @@ if [ -f "$dcache_basename" ]; then
     echo "The file $dcache_basename already exists. Skipping download."
 else
     echo "Downloading $dcache_basename..."
-    curl -s -w "%{http_code}\n" -L $dcache_rpm -O
-
-    if [ $? -eq 0 ]; then
+    if curl -s -w "%{http_code}\n" -L "$dcache_rpm" -O  ; then
         echo "Download completed successfully."
     else
         echo "Failed to download the file."
@@ -183,7 +180,10 @@ else
 fi
 
 # Extract the required JVM version
-required_jvm_version=$(echo "$page_content" | grep -oP 'dCache v[0-9]+\.[0-9]+ requires a JVM supporting Java [0-9]+' | grep -oP '[0-9]+$' | head -1)
+required_jvm_version=$(echo "$page_content" \
+                       | grep -oP 'dCache v[0-9]+\.[0-9]+ requires a JVM supporting Java [0-9]+' \
+                       | grep -oP '[0-9]+$' \
+                       | head -1)
 
 # Determine the corresponding OpenJDK package
 if [ -z "$required_jvm_version" ]; then
@@ -197,7 +197,7 @@ else
         echo "Java $required_jvm_version is already installed."
     else
         echo "Java $required_jvm_version is not installed. Installing it now..."
-        sudo yum install -y java-$required_jvm_version-openjdk-devel
+        sudo yum install -y "java-${required_jvm_version}-openjdk-devel"
     fi
 fi
 
@@ -211,23 +211,23 @@ echo "JVM setup is complete."
 dnf install httpd-tools -y
 
 # Install postgresql
-not_installed=`rpm -qa | grep postgres >/dev/null 2>&1; echo $?`
-if [ "x${not_installed}" == "x1" ]; then
+pg_version=17
+if ! rpm -qa | grep --silent postgres ; then
     sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
     sudo dnf -qy module disable postgresql
-    sudo dnf install -y postgresql16-server
+    sudo dnf install -y "postgresql${pg_version}-server"
 fi
-sudo /usr/pgsql-16/bin/postgresql-16-setup initdb
-sudo systemctl enable postgresql-16
-sudo systemctl start postgresql-16
+sudo "/usr/pgsql-${pg_version}/bin/postgresql-${pg_version}-setup" initdb
+sudo systemctl enable "postgresql-${pg_version}"
+sudo systemctl start  "postgresql-${pg_version}"
 
 # Modify pg_hba.conf
-cat /var/lib/pgsql/16/data/pg_hba.conf | grep -E 'all\s+all' | sed -i 's/scram-sha-256/trust/' /var/lib/pgsql/16/data/pg_hba.conf
+cat /var/lib/pgsql/${pg_version}/data/pg_hba.conf | grep -E 'all\s+all' | sed -i 's/scram-sha-256/trust/' /var/lib/pgsql/${pg_version}/data/pg_hba.conf
 
-sudo systemctl restart postgresql-16
+sudo systemctl restart "postgresql-${pg_version}"
 
 # Install the dcache rpm
-dnf install ./${dcache_basename} -y
+dnf install "./${dcache_basename}" -y
 
 # Postgres configuration
 #su - postgres -c "createuser --no-superuser --no-createrole --createdb --no-password dcache"
@@ -276,8 +276,7 @@ echo "PostgreSQL configuration completed."
 
 # dCache configuration
 if [ -f /etc/dcache/dcache.conf ]; then
-    not_edited=`cat /etc/dcache/dcache.conf | grep 'dcache.layout' >/dev/null 2>&1 ; echo $?`
-    if [ "x$not_edited" == "x1" ]; then
+    if ! grep --silent 'dcache.layout' /etc/dcache/dcache.conf ; then
         echo "dcache.layout=mylayout" >> /etc/dcache/dcache.conf
     fi
 fi
@@ -309,8 +308,8 @@ session  requisite   authzdb
 EOF
 
 touch /etc/dcache/htpasswd
-htpasswd -bm /etc/dcache/htpasswd tester ${PASSWD}
-htpasswd -bm /etc/dcache/htpasswd admin ${PASSWD}
+htpasswd -bm /etc/dcache/htpasswd tester "${PASSWD}"
+htpasswd -bm /etc/dcache/htpasswd admin  "${PASSWD}"
 
 cat <<'EOF' > /etc/dcache/multi-mapfile
 username:tester uid:1000 gid:1000,true
@@ -328,7 +327,10 @@ mkdir -p /etc/grid-security/certificates
 
 # Generate phony key and self-signed certificate to make pools start
 openssl genrsa 2048 > /etc/grid-security/hostkey.pem
-openssl req -x509 -days 1000 -new -subj "/C=NL/ST=Amsterdam/O=SURF/OU=ODS/CN=localhost" -key /etc/grid-security/hostkey.pem -out /etc/grid-security/hostcert.pem
+openssl req -x509 -days 1000 -new \
+            -subj "/C=NL/ST=Amsterdam/O=SURF/OU=ODS/CN=localhost" \
+            -key /etc/grid-security/hostkey.pem \
+            -out /etc/grid-security/hostcert.pem
 
 cat <<'EOF' > /etc/grid-security/storage-authzdb
 version 2.1
@@ -338,8 +340,8 @@ authorize admin read-write 0 0 / /
 EOF
 
 # Create pool
-mkdir -p ${DATADIR}
-dcache pool create ${DATADIR}/pool-1 pool1 dCacheDomain
+mkdir -p "${DATADIR}"
+dcache pool create "${DATADIR}/pool-1" pool1 dCacheDomain
 
 # Update dcache databases
 dcache database update
@@ -358,8 +360,8 @@ systemctl start dcache.target
 echo -n "Waiting for dCache to initialize "
 
 # Show the growing line of asterisks for 5 seconds
-for ((j=1; j<=10; j++)); do
-    echo -ne "\rWaiting for dCache to initialize $(printf '%*s' "$j" | tr ' ' '*')"
+for ((length=1; length<=10; length++)); do
+    echo -ne "\rWaiting for dCache to initialize $(printf '%*s' "$length" '' | tr ' ' '*')"
     sleep 0.5  # Sleep 0.5 seconds per step, so 10 steps = 5 seconds total
 done
 
@@ -370,8 +372,8 @@ sleep 1
 
 # Loop until the dcache service is active
 while ! systemctl is-active --quiet dcache.target; do
-    for ((j=1; j<=10; j++)); do
-        echo -ne "\rChecking if dcache service is started $(printf '%*s' "$j" | tr ' ' '*')"
+    for ((length=1; length<=10; length++)); do
+        echo -ne "\rChecking if dcache service is started $(printf '%*s' "$length" '' | tr ' ' '*')"
         sleep 0.1
     done
 done
