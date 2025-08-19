@@ -34,6 +34,11 @@ function show_help {
     echo "Information about dCache itself can be found at: https://www.dcache.org"
 }
 
+# Wrapper logging function
+log() {
+    local symbol="❱"
+    echo "$symbol $@"
+}
 
 # Initializing default values for variables
 DATADIR=""
@@ -116,16 +121,16 @@ while [ -z "$PASSWD" ]; do
 done
 
 # Display the values
-echo "DATADIR is set to: $DATADIR"
-echo "HSMBASE is set to: $HSMBASE"
-echo "PASSWD is set to: $PASSWD"
+log "DATADIR is set to: $DATADIR"
+log "HSMBASE is set to: $HSMBASE"
+log "PASSWD is set to: $PASSWD"
 
 
 # Set locales for postgres dbinit
 dnf install -y glibc-locale-source glibc-langpack-en
 LANG_LOCALE="C.UTF-8"
 LC_ALL_LOCALE="C.UTF-8"
-echo "Set correct locales for postgres dbinit"
+log "Set correct locales for postgres dbinit"
 
 if ! grep -q "^LANG=$LANG_LOCALE" /etc/locale.conf; then
     echo "LANG is already set to $LANG_LOCALE"
@@ -146,16 +151,15 @@ mapfile -t VERSIONS < <(echo "$HTML" | ./htmlq -t 'h2#binary-packages + ul li a'
 mapfile -t LINKS < <(echo "$HTML" | ./htmlq 'h2#binary-packages + ul li a' --attribute href)
 
 # Display menu
-echo "Select major and minor verion:"
+log "Select major and minor verion:"
 select VER in "${VERSIONS[@]}"; do
     if [[ -n "$VER" ]]; then
         INDEX=$((REPLY - 1))
         SELECTED_URL="${PAGE_URL}${LINKS[$INDEX]}"
-        echo "You selected: $VER"
-#        echo "URL: $SELECTED_URL"
+        log "You selected: $VER"
         break
     else
-        echo "Invalid selection."
+        log "Invalid selection."
     fi
 done
 
@@ -170,19 +174,16 @@ HTML2=$(curl -s "$PAGE2_URL")
 mapfile -t PACKAGES < <(echo "$HTML2" | ./htmlq -t 'table.releases td.link a' | grep -v '^[[:space:]]*$' |grep rpm)
 mapfile -t PACKAGELINKS < <(echo "$HTML2" | ./htmlq 'table.releases td.link a' --attribute href | grep -v '^[[:space:]]*$' |grep rpm)
 
-echo $PACKAGES
-
 # Display menu
-echo "Select patch version:"
+log "Select patch version:"
 select PACK in "${PACKAGES[@]}"; do
     if [[ -n "$PACK" ]]; then
         INDEX=$((REPLY - 1))
         SELECTED_PACKAGE_URL="${DCACHE_BASE_URL}${PACKAGELINKS[$INDEX]}"
-        echo "You selected: $PACK"
-#        echo "URL: $SELECTED_PACKAGE_URL"
+        log "You selected: $PACK"
         break
     else
-        echo "Invalid selection."
+        log "Invalid selection."
     fi
 done
 dcache_rpm=$SELECTED_PACKAGE_URL
@@ -190,13 +191,13 @@ dcache_basename=$(basename $dcache_rpm)
 
 # Download RPM if the file does not yet exist
 if [ -f "$dcache_basename" ]; then
-    echo "The file $dcache_basename already exists. Skipping download."
+    log "The file $dcache_basename already exists. Skipping download."
 else
-    echo "Downloading $dcache_basename..."
+    log "Downloading $dcache_basename..."
     if curl --fail -s -w "%{http_code}\n" -L "$dcache_rpm" -O  ; then
-        echo "Download completed successfully."
+        log "Download completed successfully."
     else
-        echo "Failed to download the file."
+        log "Failed to download the file."
         exit 1
     fi
 fi
@@ -204,7 +205,7 @@ fi
 
 # Check if firewalld is running
 if systemctl is-active --quiet firewalld; then
-    echo "Firewalld is running, applying firewall rules..."
+    log "Firewalld is running, applying firewall rules..."
 
     # Open port for Zookeeper
     firewall-cmd --permanent --zone=public --add-port=2181/tcp
@@ -224,15 +225,15 @@ if systemctl is-active --quiet firewalld; then
 
     # Reload firewalld to apply the changes
     firewall-cmd --reload
-    echo "Firewall rules applied successfully."
+    log "Firewall rules applied successfully."
 
 else
-    echo "Firewalld is not running, skipping firewall configuration."
+    log "Firewalld is not running, skipping firewall configuration."
 fi
 
 
 # install java and ruby
-echo "install java17 and ruby"
+log "install java17 and ruby"
 dnf install -y java-17-openjdk-devel.x86_64 ruby
 
 
@@ -280,44 +281,44 @@ PG_DB="chimera pinmanager bulk"
 
 # Check and create PostgreSQL user
 if user_exists "$PG_USER"; then
-    echo "User '$PG_USER' already exists. Skipping user creation."
+    log "User '$PG_USER' already exists. Skipping user creation."
 else
-    echo "Creating PostgreSQL user '$PG_USER'..."
+    log "Creating PostgreSQL user '$PG_USER'..."
     su - postgres -c "createuser --no-superuser --no-createrole --createdb --no-password $PG_USER"
-    echo "User '$PG_USER' created successfully."
+    log "User '$PG_USER' created successfully."
 fi
 
 # Check and create PostgreSQL database
 for database in $PG_DB ; do
   if db_exists "$database"; then
-    echo "Database '$database' already exists. Skipping database creation."
+    log "Database '$database' already exists. Skipping database creation."
   else
-    echo "Creating PostgreSQL database '$database'..."
+    log "Creating PostgreSQL database '$database'..."
     su - postgres -c "createdb $database"
-    echo "Database '$database' created successfully."
+    log "Database '$database' created successfully."
   fi
 done
 
 # Alter user to have superuser privileges
-echo "Altering user '$PG_USER' to have SUPERUSER privileges..."
+log "Altering user '$PG_USER' to have SUPERUSER privileges..."
 su - postgres -c "psql -c \"ALTER USER $PG_USER WITH SUPERUSER;\""
-echo "User '$PG_USER' altered successfully."
+log "User '$PG_USER' altered successfully."
 
-echo "PostgreSQL configuration completed."
+log "PostgreSQL configuration completed."
 
 # Create sshkey for admin interface
 sshkey="/root/.ssh/id_ed25519"
 if [ -f "$sshkey" ]; then
-    echo "ssh private key $sshkey already created"
+    log "ssh private key $sshkey already created"
 else
-    echo "generate sshkey for root"
+    log "generate sshkey for root"
     ssh-keygen -t ed25519 -N "" -f $sshkey -q
-    echo "add root ssh publickey: $sshkey to admin interface authorized_keys"
+    log "add root ssh publickey: $sshkey to admin interface authorized_keys"
     cat "${sshkey}.pub" |sed 's/root@/admin@/' >> /etc/dcache/admin/authorized_keys2
 fi
 
-echo "Writing dCache configuration files."
-echo "  /etc/dcache/dcache.conf"
+log "Writing dCache configuration files."
+log "  /etc/dcache/dcache.conf"
 # dCache configuration
 if [ -f /etc/dcache/dcache.conf ]; then
     if ! grep --silent 'dcache.layout' /etc/dcache/dcache.conf ; then
@@ -327,11 +328,11 @@ fi
 
 defaultIP=$(ip -4 addr show $(ip -4 route show default | awk '{print $5}') | grep "inet " | awk '{print $2}' |cut -d "/" -f 1
 )
-echo "Default IP is: $defaultIP"
+log "Default IP is: $defaultIP"
 layoutfile="/etc/dcache/layouts/mylayout.conf"
-echo "  $layoutfile"
+log "  $layoutfile"
 if [ -f "$layoutfile" ]; then
-  echo "Layoutfile: $layoutfile already exists. Not overwriting"
+  log "Layoutfile: $layoutfile already exists. Not overwriting"
 else
 cat <<EOF >$layoutfile
 dcache.enable.space-reservation = false
@@ -362,7 +363,7 @@ EOF
 fi
 
 
-echo "  /etc/dcache/gplazma.conf"
+log "  /etc/dcache/gplazma.conf"
 cat <<'EOF' >/etc/dcache/gplazma.conf
 auth     sufficient  htpasswd
 map      sufficient  multimap
@@ -370,12 +371,12 @@ account  requisite   banfile
 session  requisite   authzdb
 EOF
 
-echo "  /etc/dcache/htpasswd"
+log "  /etc/dcache/htpasswd"
 touch /etc/dcache/htpasswd
 htpasswd -bm /etc/dcache/htpasswd tester "${PASSWD}"
 htpasswd -bm /etc/dcache/htpasswd admin  "${PASSWD}"
 
-echo "  /etc/dcache/multi-mapfile"
+log "  /etc/dcache/multi-mapfile"
 cat <<'EOF' > /etc/dcache/multi-mapfile
 username:tester uid:1000 gid:1000,true
 username:admin  uid:0    gid:0,true
@@ -384,7 +385,7 @@ EOF
 touch /etc/dcache/ban.conf
 
 
-echo "Generating self-signed host certificate..."
+log "Generating self-signed host certificate..."
 mkdir -p /etc/grid-security
 touch /etc/grid-security/hostkey.pem
 touch /etc/grid-security/hostcert.pem
@@ -395,7 +396,7 @@ openssl req -x509 -days 1000 -new \
             -key /etc/grid-security/hostkey.pem \
             -out /etc/grid-security/hostcert.pem
 
-echo "  /etc/grid-security/storage-authzdb"
+log "  /etc/grid-security/storage-authzdb"
 cat <<'EOF' > /etc/grid-security/storage-authzdb
 version 2.1
 
@@ -403,16 +404,16 @@ authorize tester read-write 1000 1000 /home/tester /
 authorize admin read-write 0 0 / /
 EOF
 
-echo "Creating pools"
+log "Creating pools"
 mkdir -p "${DATADIR}"
 dcache pool create "${DATADIR}/pool-1" pool1 dCacheDomain
 dcache pool create "${DATADIR}/tapepool-1" tapepool1 dCacheDomain
 
 
-echo "Running 'dcache database update' to lay out the database structures."
+log "Running 'dcache database update' to lay out the database structures."
 dcache database update
 
-echo "Creating directories in the dCache namespace"
+log "Creating directories in the dCache namespace"
 # Create user home directories
 chimera mkdir /home
 chimera mkdir /home/tester
@@ -428,23 +429,19 @@ chimera writetag /home/tester/tape AccessLatency NEARLINE
 chimera writetag /home/tester/tape RetentionPolicy CUSTODIAL
 
 
-echo "Starting dCache..."
+log "Starting dCache..."
 systemctl daemon-reload
 systemctl stop dcache.target
 systemctl start dcache.target
 
-# Give dCache some time to startup
-echo -n "Waiting for dCache to initialize "
-
+echo 
 # Show the growing line of asterisks for 5 seconds
 for ((length=1; length<=10; length++)); do
     echo -ne "\rWaiting for dCache to initialize $(printf '%*s' "$length" '' | tr ' ' '*')"
     sleep 0.5  # Sleep 0.5 seconds per step, so 10 steps = 5 seconds total
 done
 
-# Move to a new line before checking the service
-echo -ne "\rChecking if dcache service is started "
-
+echo 
 sleep 1
 
 # Loop until the dcache service is active
@@ -457,7 +454,7 @@ done
 
 sleep 1
 
-echo -ne "\rdCache is running!                                     \n"
+log "dCache is running"
 
 # Create a function to easily access the admin interface
 dcache-admin () {
@@ -468,13 +465,13 @@ dcache-admin () {
 }
 
 # Test it and quit if it doesn't work
-echo "Waiting for admin interface to start"
-false; while test "$?" -ne "0"; do sleep 1; nc -z localhost 22224 -w 1 && echo "Admin interface started"; done
-echo "Trying to request PoolManager status from admin interface so check if it started correctly"
+log "Waiting for admin interface to start"
+false; while test "$?" -ne "0"; do sleep 1; nc -z localhost 22224 -w 1 && log "Admin interface started"; done
+log "Trying to request PoolManager status from admin interface so check if it started correctly"
 count=0
 while [ $count -lt 20 ]; do
     if dcache-admin PoolManager info 2>&1 | grep -q PoolUp; then
-        echo "Admin interface ready."
+        log "Admin interface ready."
         break
     else
         sleep 1
@@ -483,20 +480,20 @@ while [ $count -lt 20 ]; do
 done
 
 if [ $count -eq 20 ]; then
-    echo "Unable to query PoolManager status via admin command. Exit"
+    log "Unable to query PoolManager status via admin command. Exit"
     exit 1
 fi
 
-echo "Preparing HSM script, for fake tape backend."
+log "Preparing HSM script, for fake tape backend."
 sed -e 's@puts URI.escape("hsm://#{instance}/?store=#{store}&group=#{group}&bfid=#{pnfsid}")@puts "hsm://#{instance}/?store=#{store}&group=#{group}&bfid=#{pnfsid}"@' \
     -i /usr/share/dcache/lib/hsmcp.rb
 chmod 755 /usr/share/dcache/lib/hsmcp.rb
 
-echo "Check if tapepool1 is ready"
+log "Check if tapepool1 is ready"
 count=0
 while [ $count -lt 20 ]; do
     if dcache-admin tapepool1 info 2>&1 | grep -q "State : OPEN"; then
-        echo "tapepool1 ready."
+        log "tapepool1 ready."
         break
     else
         sleep 1
@@ -504,15 +501,15 @@ while [ $count -lt 20 ]; do
     fi
 done
 if [ $count -eq 20 ]; then
-    echo "Tapepool1 seems to having issues. Exit"
+    log "Tapepool1 seems to having issues. Exit"
     exit 1
 fi
-echo "Configuring tape pool"
+log "Configuring tape pool"
 dcache-admin "tapepool1" "hsm create -command=/usr/share/dcache/lib/hsmcp.rb -pnfs=/pnfs -hsmBase=${HSMBASE} -hsmInstance=osm -c:puts=1 -c:gets=1 -c:removes=1 osm"
 # Pool configuration should be saved! Otherwise it vanishes after a restart.
 dcache-admin "tapepool1" "save"
 
-echo "Preparing 'tape' directory"
+log "Preparing 'tape' directory"
 chown dcache "$HSMBASE"
 chmod 770 "$HSMBASE"
 
@@ -547,9 +544,9 @@ echo "Your admin console is available with the following command. You won't need
 echo "ssh -p 22224 admin@localhost"
 echo
 echo "You can test uploading the README.md file with webdav now:"
-echo "curl -v -u tester:$PASSWD -L -T README.md http://localhost:2880/home/tester/README.md"
+echo "curl -k -v -u tester:$PASSWD -L -T README.md https://localhost:2880/home/tester/README.md"
 echo
 echo "Getting a macaroon authentication token:"
-echo "curl -u tester:$PASSWD -X POST -H 'Content-Type: application/macaroon-request' -d '{ \"caveats\"  : [ \"path:/home/tester/\", \"activity:DOWNLOAD,LIST,UPLOAD,DELETE,MANAGE,READ_METADATA,UPDATE_METADATA\" ], \"validity\" : \"PT12H\" }' --fail http://localhost:2880/"
+echo "curl -k -u tester:$PASSWD -X POST -H 'Content-Type: application/macaroon-request' -d '{ \"caveats\"  : [ \"path:/home/tester/\", \"activity:DOWNLOAD,LIST,UPLOAD,DELETE,MANAGE,READ_METADATA,UPDATE_METADATA\" ], \"validity\" : \"PT12H\" }' --fail https://localhost:2880/"
 echo
 echo "The api is available at: https://192.168.122.23:3880/api/v1/"
