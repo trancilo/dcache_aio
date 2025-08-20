@@ -5,7 +5,7 @@ It can be used to test functionality and try out specific versions of dCache.
 
 Setting up a dCache instance using the [dcache book](https://www.dcache.org/manuals/Book-10.2/) 
 can be time consuming. This script will make it easy to get started and can be used as guide to see which steps are needed to get to a running instance and how to configure a [hsm](https://www.dcache.org/manuals/Book-10.2/cookbook-writing-hsm-plugins.shtml) tape-backend.<br>
-❢ Currently this script is not yet fully idempotent. Which means running it multiple times might cause things to break.
+❢ Currently this script is not yet fully idempotent. Which means running it multiple times might cause things to break. Generally this should be fine but don't count on it.
 
 
 Features:
