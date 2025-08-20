@@ -434,16 +434,6 @@ systemctl daemon-reload
 systemctl stop dcache.target
 systemctl start dcache.target
 
-echo 
-# Show the growing line of asterisks for 5 seconds
-for ((length=1; length<=10; length++)); do
-    echo -ne "\rWaiting for dCache to initialize $(printf '%*s' "$length" '' | tr ' ' '*')"
-    sleep 0.5  # Sleep 0.5 seconds per step, so 10 steps = 5 seconds total
-done
-
-echo 
-sleep 1
-
 # Loop until the dcache service is active
 while ! systemctl is-active --quiet dcache.target; do
     for ((length=1; length<=10; length++)); do
@@ -451,10 +441,27 @@ while ! systemctl is-active --quiet dcache.target; do
         sleep 0.1
     done
 done
-
-sleep 1
-
 log "dCache is running"
+
+log "Waiting for admin interface to start"
+count=0
+max_count=60
+false
+while [ "$?" -ne "0" ]; do
+    if nc -z localhost 22224 -w 1
+    then
+        log "Admin interface ready."
+        break
+    else
+        sleep 1
+       ((count++))
+    fi
+done
+
+if [ $count -eq $max_count ]; then
+    log "Admin interface did not become ready. Exit"
+    exit 1
+fi
 
 # Create a function to easily access the admin interface
 dcache-admin () {
@@ -464,12 +471,9 @@ dcache-admin () {
   ssh -i $sshkey admin@localhost  -o "StrictHostKeyChecking no" -p 22224 "\s $service $command"
 }
 
-# Test it and quit if it doesn't work
-log "Waiting for admin interface to start"
-false; while test "$?" -ne "0"; do sleep 1; nc -z localhost 22224 -w 1 && log "Admin interface started"; done
 log "Trying to request PoolManager status from admin interface so check if it started correctly"
 count=0
-while [ $count -lt 20 ]; do
+while [ $count -lt $max_count ]; do
     if dcache-admin PoolManager info 2>&1 | grep -q PoolUp; then
         log "Admin interface ready."
         break
@@ -479,7 +483,7 @@ while [ $count -lt 20 ]; do
     fi
 done
 
-if [ $count -eq 20 ]; then
+if [ $count -eq $max_count ]; then
     log "Unable to query PoolManager status via admin command. Exit"
     exit 1
 fi
@@ -491,7 +495,7 @@ chmod 755 /usr/share/dcache/lib/hsmcp.rb
 
 log "Check if tapepool1 is ready"
 count=0
-while [ $count -lt 20 ]; do
+while [ $count -lt $max_count ]; do
     if dcache-admin tapepool1 info 2>&1 | grep -q "State : OPEN"; then
         log "tapepool1 ready."
         break
@@ -500,7 +504,7 @@ while [ $count -lt 20 ]; do
        ((count++))
     fi
 done
-if [ $count -eq 20 ]; then
+if [ $count -eq $max_count ]; then
     log "Tapepool1 seems to having issues. Exit"
     exit 1
 fi
@@ -547,6 +551,6 @@ echo "You can test uploading the README.md file with webdav now:"
 echo "curl -k -v -u tester:$PASSWD -L -T README.md https://localhost:2880/home/tester/README.md"
 echo
 echo "Getting a macaroon authentication token:"
-echo "curl -k -u tester:$PASSWD -X POST -H 'Content-Type: application/macaroon-request' -d '{ \"caveats\"  : [ \"path:/home/tester/\", \"activity:DOWNLOAD,LIST,UPLOAD,DELETE,MANAGE,READ_METADATA,UPDATE_METADATA\" ], \"validity\" : \"PT12H\" }' --fail https://localhost:2880/"
+echo "curl -k -u tester:$PASSWD -X POST -H 'Content-Type: application/macaroon-request' -d '{ \"caveats\"  : [ \"path:/home/tester/\", \"activity:DOWNLOAD,LIST,UPLOAD,DELETE,MANAGE,READ_METADATA,UPDATE_METADATA,STAGE\" ], \"validity\" : \"PT12H\" }' --fail https://localhost:2880/"
 echo
-echo "The api is available at: https://192.168.122.23:3880/api/v1/"
+echo "The api is available at: https://localhost:3880/api/v1/"
